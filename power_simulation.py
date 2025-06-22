@@ -242,6 +242,291 @@ if __name__ == '__main__':
     plt.ylim(0, 1.05)
     plt.savefig('power_vs_snr.png')
     print("Saved plot to power_vs_snr.png")
-    # plt.show()
+    # plt.show() # plt.close() is now handled by plot_parameter_vs_power
 
-    print("\nAll experiments complete.")
+    # --- Demonstrate plot_parameter_vs_power ---
+    print("\n--- Demonstrating generalized plotting function ---")
+
+    # Base parameters for demonstrations
+    base_params = {'N': 2000, 'HI': 0.5, 'MAF': 0.2, 'beta': 0.15, 'SNR': 0.05, 'alpha': 0.05}
+    num_sims_exp_main = 300 # Reduced for faster demo in main; increase for smoother curves
+
+    # Vary N
+    # Create a specific dict for fixed_params by removing the varying key from base_params
+    fixed_params_N = {k: v for k, v in base_params.items() if k != 'N'}
+    plot_parameter_vs_power(
+        fixed_params=fixed_params_N,
+        varying_param_name='N',
+        varying_param_values=np.array([100, 500, 1000, 2000, 4000, 8000]),
+        num_sims_per_point=num_sims_exp_main,
+        title=f'Power vs. Sample Size (N)\n(HI={base_params["HI"]}, MAF={base_params["MAF"]}, beta={base_params["beta"]}, SNR={base_params["SNR"]})',
+        xlabel='Total Sample Size (N)',
+        filename='main_power_vs_sample_size.png'
+    )
+
+    # Vary HI
+    fixed_params_HI = {k: v for k, v in base_params.items() if k != 'HI'}
+    plot_parameter_vs_power(
+        fixed_params=fixed_params_HI,
+        varying_param_name='HI',
+        varying_param_values=np.linspace(0.05, 1.0, 10),
+        num_sims_per_point=num_sims_exp_main,
+        title=f'Power vs. Heterogeneity Index (HI)\n(N={base_params["N"]}, MAF={base_params["MAF"]}, beta={base_params["beta"]}, SNR={base_params["SNR"]})',
+        xlabel='Heterogeneity Index (HI)',
+        filename='main_power_vs_hi.png'
+    )
+
+    # Vary MAF
+    fixed_params_MAF = {k: v for k, v in base_params.items() if k != 'MAF'}
+    plot_parameter_vs_power(
+        fixed_params=fixed_params_MAF,
+        varying_param_name='MAF',
+        varying_param_values=np.linspace(0.01, 0.5, 10),
+        num_sims_per_point=num_sims_exp_main,
+        title=f'Power vs. Minor Allele Frequency (MAF)\n(N={base_params["N"]}, HI={base_params["HI"]}, beta={base_params["beta"]}, SNR={base_params["SNR"]})',
+        xlabel='Minor Allele Frequency (MAF)',
+        filename='main_power_vs_maf.png'
+    )
+
+    # Vary beta (Effect Size)
+    fixed_params_beta = {k: v for k, v in base_params.items() if k != 'beta'}
+    plot_parameter_vs_power(
+        fixed_params=fixed_params_beta,
+        varying_param_name='beta',
+        varying_param_values=np.linspace(0.05, 0.35, 10), # Adjusted beta range for more variability
+        num_sims_per_point=num_sims_exp_main,
+        title=f'Power vs. Effect Size (beta)\n(N={base_params["N"]}, HI={base_params["HI"]}, MAF={base_params["MAF"]}, SNR={base_params["SNR"]})',
+        xlabel='Effect Size (beta)',
+        filename='main_power_vs_beta.png'
+    )
+
+    # Vary SNR
+    fixed_params_SNR = {k: v for k, v in base_params.items() if k != 'SNR'}
+    plot_parameter_vs_power(
+        fixed_params=fixed_params_SNR,
+        varying_param_name='SNR',
+        varying_param_values=np.array([0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5]),
+        num_sims_per_point=num_sims_exp_main,
+        title=f'Power vs. Signal-to-Noise Ratio (SNR)\n(N={base_params["N"]}, HI={base_params["HI"]}, MAF={base_params["MAF"]}, beta={base_params["beta"]})',
+        xlabel='Signal-to-Noise Ratio (SNR)',
+        filename='main_power_vs_snr.png',
+        x_log_scale=True
+    )
+
+    # --- Demonstrate estimate_hi_for_target_power ---
+    print("\n--- Demonstrating HI estimation for target power ---")
+    target_p_demo = 0.80
+    N_for_hi_est_demo = 3000
+    MAF_for_hi_est_demo = 0.10
+    beta_for_hi_est_demo = 0.20 # Adjusted effect size for demonstration
+    SNR_for_hi_est_demo = 0.08  # Adjusted SNR for demonstration
+
+    estimated_hi_demo = estimate_hi_for_target_power(
+        target_power=target_p_demo,
+        N=N_for_hi_est_demo,
+        MAF=MAF_for_hi_est_demo,
+        beta=beta_for_hi_est_demo,
+        SNR=SNR_for_hi_est_demo,
+        alpha=0.05,
+        num_simulations_per_hi_evaluation=num_sims_exp_main, # Use same num_sims for consistency
+        tolerance=0.03,
+        max_iterations=15
+    )
+
+    if estimated_hi_demo is not None:
+        print(f"\nTo achieve ~{target_p_demo*100}% power with N={N_for_hi_est_demo}, MAF={MAF_for_hi_est_demo}, beta={beta_for_hi_est_demo}, SNR={SNR_for_hi_est_demo},")
+        print(f"the estimated Heterogeneity Index (HI) required is: {estimated_hi_demo:.4f}")
+        # Verification step
+        print("Verifying power with the estimated HI...")
+        power_at_estimated_hi_demo = estimate_power(num_sims_exp_main + 200, N_for_hi_est_demo, estimated_hi_demo, MAF_for_hi_est_demo, beta_for_hi_est_demo, SNR_for_hi_est_demo, 0.05)
+        print(f"Power achieved with estimated HI ({estimated_hi_demo:.4f}): {power_at_estimated_hi_demo:.4f if power_at_estimated_hi_demo is not np.nan else 'NaN'}")
+    else:
+        print(f"\nCould not estimate HI to achieve {target_p_demo*100}% power for the given parameters.")
+        print(f"(N={N_for_hi_est_demo}, MAF={MAF_for_hi_est_demo}, beta={beta_for_hi_est_demo}, SNR={SNR_for_hi_est_demo})")
+
+    print("\nAll demonstrations complete.")
+
+
+# --- Reusable plotting function (to be implemented in next step) ---
+def plot_parameter_vs_power(fixed_params: dict,
+                            varying_param_name: str,
+                            varying_param_values: list,
+                            num_sims_per_point: int,
+                            title: str,
+                            xlabel: str,
+                            filename: str,
+                            x_log_scale: bool = False):
+    """
+    Simulates power across a range of values for a single parameter and plots the results.
+
+    Args:
+        fixed_params (dict): A dictionary of parameters that will be held constant.
+                             Expected keys: N, HI, MAF, beta, SNR, alpha.
+                             One of these will be overridden by varying_param_name.
+        varying_param_name (str): The name of the parameter to vary (e.g., 'N', 'HI').
+        varying_param_values (list): A list of values for the varying parameter.
+        num_sims_per_point (int): Number of simulations to run for each parameter value.
+        title (str): The title for the plot.
+        xlabel (str): The label for the x-axis.
+        filename (str): The filename to save the plot (e.g., 'plot.png').
+        x_log_scale (bool, optional): Whether to use a log scale for the x-axis. Defaults to False.
+    """
+    # Implementation will involve:
+    # 1. Initializing a list to store power values.
+    # 2. Looping through varying_param_values:
+    #    a. Creating a copy of fixed_params and updating it with the current varying value.
+    #    b. Calling estimate_power with these params.
+    #    c. Storing the result.
+    # 3. Using matplotlib to generate and save the plot.
+
+    import matplotlib.pyplot as plt # Ensure pyplot is imported locally or globally
+
+    powers = []
+
+    # Default parameters - ensure all necessary keys exist in fixed_params or provide defaults
+    # This is important because estimate_power expects N, HI, MAF, beta, SNR, alpha
+    current_sim_params = {
+        'N': 1000, 'HI': 0.5, 'MAF': 0.1, 'beta': 0.1, 'SNR': 0.1, 'alpha': 0.05
+    }
+    current_sim_params.update(fixed_params) # Override defaults with provided fixed_params
+
+    print(f"\nRunning experiment for plot: {title}")
+    for val in varying_param_values:
+        # Create a mutable copy for the current iteration
+        iter_params = current_sim_params.copy()
+
+        # Update the specific parameter that is varying
+        if varying_param_name not in iter_params:
+            print(f"Warning: varying_param_name '{varying_param_name}' not in default simulation parameters. Adding it.")
+        iter_params[varying_param_name] = val
+
+        print(f"  Simulating for {varying_param_name} = {val}...")
+
+        # Ensure all required parameters for estimate_power are present
+        power = estimate_power(
+            num_simulations=num_sims_per_point,
+            N=int(iter_params['N']), # Ensure N is int
+            HI=float(iter_params['HI']),
+            MAF=float(iter_params['MAF']),
+            beta=float(iter_params['beta']),
+            SNR=float(iter_params['SNR']),
+            alpha=float(iter_params['alpha'])
+        )
+        powers.append(power)
+        print(f"    Estimated Power: {power:.4f}" if power is not np.nan else "    Estimated Power: NaN")
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(varying_param_values, powers, marker='o', linestyle='-')
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel('Statistical Power')
+
+    if x_log_scale:
+        plt.xscale('log')
+        plt.grid(True, which="both", ls="-")
+    else:
+        plt.grid(True)
+
+    plt.ylim(0, 1.05)
+    plt.savefig(filename)
+    print(f"Saved plot to {filename}")
+    # plt.show() # Uncomment to display plot directly
+    plt.close() # Close the figure to free memory
+
+
+def estimate_hi_for_target_power(target_power: float,
+                                 N: int,
+                                 MAF: float,
+                                 beta: float,
+                                 SNR: float,
+                                 alpha: float = 0.05,
+                                 num_simulations_per_hi_evaluation: int = 500,
+                                 hi_search_min: float = 0.01,
+                                 hi_search_max: float = 1.0,
+                                 tolerance: float = 0.02,
+                                 max_iterations: int = 10): # Max iterations for bisection search
+    """
+    Estimates the Heterogeneity Index (HI) required to achieve a target statistical power
+    for a given set of other parameters, using a bisection search method.
+
+    Args:
+        target_power (float): The desired statistical power (e.g., 0.8 for 80%).
+        N (int): Total sample size.
+        MAF (float): Minor allele frequency.
+        beta (float): Effect size.
+        SNR (float): Signal-to-noise ratio.
+        alpha (float, optional): Significance level. Defaults to 0.05.
+        num_simulations_per_hi_evaluation (int, optional): Number of simulations to run
+            for each HI value tested. Defaults to 500.
+        hi_search_min (float, optional): Minimum HI to consider in search. Defaults to 0.01.
+        hi_search_max (float, optional): Maximum HI to consider in search. Defaults to 1.0.
+        tolerance (float, optional): The acceptable difference between achieved power and
+                                     target_power. Defaults to 0.02.
+        max_iterations (int, optional): Maximum number of iterations for the bisection search.
+                                       Defaults to 10.
+
+    Returns:
+        float or None: The estimated HI value if found within tolerance and iterations,
+                       otherwise None.
+    """
+    print(f"\nEstimating HI for target power={target_power} (N={N}, MAF={MAF}, beta={beta}, SNR={SNR})")
+
+    low_hi = hi_search_min
+    high_hi = hi_search_max
+
+    # Evaluate power at boundary HIs
+    power_at_low_hi = estimate_power(num_simulations_per_hi_evaluation, N, low_hi, MAF, beta, SNR, alpha)
+    if power_at_low_hi is np.nan: power_at_low_hi = 0 # Treat NaN as 0 power for search
+    print(f"  Power at HI={low_hi:.3f}: {power_at_low_hi:.4f}")
+    if power_at_low_hi >= target_power:
+        print(f"  Target power achieved or exceeded at minimum HI search boundary ({low_hi:.3f}).")
+        return low_hi
+
+    power_at_high_hi = estimate_power(num_simulations_per_hi_evaluation, N, high_hi, MAF, beta, SNR, alpha)
+    if power_at_high_hi is np.nan: power_at_high_hi = 0 # Treat NaN as 0 power
+    print(f"  Power at HI={high_hi:.3f}: {power_at_high_hi:.4f}")
+    if power_at_high_hi < target_power:
+        print(f"  Target power not achievable even at maximum HI search boundary ({high_hi:.3f}). Power was {power_at_high_hi:.4f}")
+        return None # Target power might be too high for these parameters
+
+    for iteration in range(max_iterations):
+        mid_hi = (low_hi + high_hi) / 2
+        if mid_hi <= 0: # Safety break if HI becomes non-positive
+            print("  Warning: mid_hi became non-positive during search.")
+            return None
+
+        current_power = estimate_power(num_simulations_per_hi_evaluation, N, mid_hi, MAF, beta, SNR, alpha)
+        if current_power is np.nan: current_power = 0 # Treat NaN as 0 power for search logic
+
+        print(f"  Iter {iteration+1}/{max_iterations}: HI={mid_hi:.4f}, Power={current_power:.4f}")
+
+        if abs(current_power - target_power) <= tolerance:
+            print(f"  Found HI={mid_hi:.4f} achieving power {current_power:.4f} (target {target_power:.4f})")
+            return mid_hi
+
+        if current_power < target_power:
+            low_hi = mid_hi
+        else:
+            high_hi = mid_hi
+
+        if (high_hi - low_hi) < 0.005 : # If interval is too small, stop
+            print(f"  Search interval {high_hi - low_hi:.4f} too small. Returning best guess HI based on current bounds.")
+            # Return the HI that's closer or average, or the one that gives power closer to target
+            # For simplicity, return mid_hi from last valid estimate, or average of bounds
+            return (low_hi + high_hi) / 2
+
+
+    print(f"  Failed to converge to target power within {max_iterations} iterations and tolerance {tolerance}.")
+    # Check if the power at the final low_hi or high_hi is close enough, as the loop might terminate due to iterations
+    # This is a bit redundant if the loop condition (high_hi - low_hi) is small enough.
+    # The bisection method naturally finds a value. The question is if that value's power is within tolerance.
+    # The final mid_hi from the loop might be the best estimate.
+    # Let's re-evaluate the last 'low_hi' and 'high_hi' as they bracket the solution
+    final_power_low = estimate_power(num_simulations_per_hi_evaluation, N, low_hi, MAF, beta, SNR, alpha)
+    if final_power_low is not np.nan and abs(final_power_low - target_power) <= tolerance :
+        return low_hi
+    final_power_high = estimate_power(num_simulations_per_hi_evaluation, N, high_hi, MAF, beta, SNR, alpha)
+    if final_power_high is not np.nan and abs(final_power_high - target_power) <= tolerance:
+        return high_hi
+
+    return None # Failed to find suitable HI
