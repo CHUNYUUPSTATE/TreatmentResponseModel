@@ -1,5 +1,167 @@
+"""
+Power Simulation Script for Genetic Association Studies
+
+This script provides tools to:
+1. Simulate phenotypes and genotypes to estimate statistical power under various scenarios.
+2. Plot relationships between power and parameters like sample size (N), Minor Allele
+   Frequency (MAF), effect size (beta), Signal-to-Noise Ratio (SNR), and
+   Heterogeneity Index (HI).
+3. Estimate the Heterogeneity Index (HI) required to achieve a target statistical power.
+
+The simulations assume a quantitative phenotype model.
+
+Command-Line Interface (CLI):
+The script uses `argparse` to provide a CLI for its main functionalities:
+  - `plot`: Generates power curves by varying one parameter while others are fixed.
+  - `estimate_hi`: Estimates the HI needed for a specified target power.
+
+Handling Case/Control Sample Sizes (N):
+For case/control studies, 'N' should generally be the total sample size (N_cases + N_controls).
+The effect size 'beta' and SNR should be considered in terms of their impact on the
+quantitative liability scale if applying results to a case/control design. The current
+simulation directly models a quantitative trait.
+
+Typical workflow for HI estimation based on observed signals:
+If you observed 'k' signals at a p-value 'alpha_obs' (e.g., 5e-8) with a sample size 'N_total',
+and you assume these signals were detected with approximately 'target_P' power (e.g., 80%),
+you can use the 'estimate_hi' command:
+  --target_power [target_P]
+  --N [N_total]
+  --alpha [alpha_obs]
+  --MAF [typical_MAF_for_signals]
+  --beta [typical_beta_for_signals]
+  --SNR [typical_SNR_for_signals]
+This will find an HI consistent with these assumptions.
+"""
 import numpy as np
 from scipy import stats
+import argparse
+import json
+
+# Helper function to parse varying_param_values_spec
+def parse_varying_param_values(spec_str: str) -> np.ndarray:
+    """
+    Parses a string specification for numerical values into a NumPy array.
+
+    The string can be:
+    1. A comma-separated list of numbers (e.g., "1,2,3,4,5").
+    2. A "start,stop,num" specification for np.linspace (e.g., "0.1,1.0,10").
+       This is interpreted as np.linspace(start, stop, int(num)) if:
+       - 'num' is an integer >= 2.
+       - 'start' <= 'stop'.
+       Otherwise, a 3-element list is treated as explicit values.
+
+    Args:
+        spec_str (str): The string specification.
+
+    Returns:
+        np.ndarray: The array of numerical values.
+
+    Raises:
+        ValueError: If the string format is invalid or results in an empty array.
+    """
+    parts = [float(p.strip()) for p in spec_str.split(',')]
+    if len(parts) == 3:
+        # Check if it's likely meant for linspace
+        # A simple heuristic: if the third number is an integer and >= 2, assume linspace
+        if parts[2] == int(parts[2]) and parts[2] >= 2:
+             # Check if start <= stop for linspace
+            if parts[0] <= parts[1]:
+                return np.linspace(parts[0], parts[1], int(parts[2]))
+            else: # if start > stop, it's probably a list of 3 values
+                return np.array(parts)
+        else: # if third number is not int or <2, assume it's a list of 3 values
+            return np.array(parts)
+    elif len(parts) > 0:
+        return np.array(parts)
+    else:
+        raise ValueError("Invalid format for varying_param_values_spec. Use 'start,stop,num' or 'v1,v2,v3,...'.")
+
+def create_parser():
+    """
+    Creates and configures the argparse parser for the script's command-line interface.
+
+    Returns:
+        argparse.ArgumentParser: The configured argument parser.
+    """
+    parser = argparse.ArgumentParser(
+        description="Simulate and analyze statistical power for genetic association studies. See script docstring for more details on N/beta/SNR for case-control.",
+        formatter_class=argparse.RawTextHelpFormatter # To allow newlines in help messages
+        )
+    parser.epilog = """\
+Examples:
+
+1. Plot Power vs. Sample Size (N):
+   python power_simulation.py plot \\
+     --fixed_params_json "{\\"HI\\": 0.5, \\"MAF\\": 0.1, \\"beta\\": 0.05, \\"SNR\\": 0.01, \\"alpha\\": 5e-8}" \\
+     --varying_param_name N \\
+     --varying_param_values_spec "10000,50000,5" \\
+     --num_sims_per_point 100 \\
+     --filename N_vs_power.png \\
+     --title "Power vs. Sample Size"
+
+2. Estimate HI for 80% power (e.g., for observed GWAS signals):
+   python power_simulation.py estimate_hi \\
+     --target_power 0.8 \\
+     --N 30000 \\
+     --MAF 0.05 \\
+     --beta 0.075 \\
+     --SNR 0.02 \\
+     --alpha 5e-8 \\
+     --num_sims_eval 200
+"""
+    subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands. Use [command] --help for more details.")
+
+    # --- Plot Subcommand ---
+    plot_parser = subparsers.add_parser("plot", help="Generate power plots by varying one parameter.")
+    plot_parser.add_argument("--fixed_params_json", type=str, required=True,
+                             help="JSON string of fixed parameters (e.g., '{\"N\": 1000, \"MAF\": 0.1, ...}'). "
+                                  "For N in case/control, use total N = Ncases + Ncontrols. "
+                                  "Beta/SNR should be on quantitative scale.")
+    plot_parser.add_argument("--varying_param_name", type=str, required=True,
+                             choices=['N', 'HI', 'MAF', 'beta', 'SNR', 'alpha'],
+                             help="Name of the parameter to vary.")
+    plot_parser.add_argument("--varying_param_values_spec", type=str, required=True,
+                             help="Specification for varying parameter values. "
+                                  "Use 'start,stop,num' for np.linspace (e.g., '0.1,1.0,10') "
+                                  "or comma-separated values (e.g., '100,500,1000').")
+    plot_parser.add_argument("--num_sims_per_point", type=int, default=500,
+                             help="Number of simulations for each point on the plot (default: 500).")
+    plot_parser.add_argument("--title", type=str, default="Power Analysis Plot",
+                             help="Title for the plot.")
+    plot_parser.add_argument("--xlabel", type=str, default=None,
+                             help="Label for the x-axis (defaults to varying_param_name).")
+    plot_parser.add_argument("--filename", type=str, default="power_plot.png",
+                             help="Filename to save the plot (default: power_plot.png).")
+    plot_parser.add_argument("--x_log_scale", action="store_true",
+                             help="Use a logarithmic scale for the x-axis.")
+
+    # --- Estimate HI Subcommand ---
+    est_hi_parser = subparsers.add_parser("estimate_hi",
+                                          help="Estimate Heterogeneity Index (HI) for a target power. "
+                                               "Useful for scenarios like: given N, alpha, and typical MAF/beta/SNR "
+                                               "for observed signals, what HI yields a target power (e.g., 0.8)?")
+    est_hi_parser.add_argument("--target_power", type=float, required=True, help="Target statistical power (e.g., 0.8).")
+    est_hi_parser.add_argument("--N", type=int, required=True,
+                               help="Total sample size. For case/control, use N = Ncases + Ncontrols.")
+    est_hi_parser.add_argument("--MAF", type=float, required=True, help="Typical Minor Allele Frequency for the signals.")
+    est_hi_parser.add_argument("--beta", type=float, required=True,
+                               help="Typical effect size (on quantitative scale) for the signals. "
+                                    "For case/control, this should correspond to an effect on the liability scale.")
+    est_hi_parser.add_argument("--SNR", type=float, required=True,
+                               help="Typical Signal-to-Noise Ratio for the signals (on quantitative scale).")
+    est_hi_parser.add_argument("--alpha", type=float, default=0.05,
+                               help="Significance level (e.g., 5e-8 for GWAS). Default: 0.05.")
+    est_hi_parser.add_argument("--num_sims_eval", type=int, default=500,
+                               help="Number of simulations per HI evaluation in search (default: 500).")
+    est_hi_parser.add_argument("--hi_min", type=float, default=0.01, help="Minimum HI for search (default: 0.01).")
+    est_hi_parser.add_argument("--hi_max", type=float, default=1.0, help="Maximum HI for search (default: 1.0).")
+    est_hi_parser.add_argument("--tolerance", type=float, default=0.02,
+                               help="Tolerance for power difference in HI search (default: 0.02).")
+    est_hi_parser.add_argument("--max_iter", type=int, default=10,
+                               help="Maximum iterations for HI bisection search (default: 10).")
+
+    return parser
 
 def simulate_phenotype_and_test(N: int, HI: float, MAF: float, beta: float, SNR: float, alpha: float = 0.05):
     """
@@ -157,195 +319,73 @@ if __name__ == '__main__':
 
     import matplotlib.pyplot as plt
 
-    # --- Experiment 1: Power vs. Sample Size (N) ---
-    print("\nRunning Experiment 1: Power vs. Sample Size (N)")
-    sample_sizes = np.array([100, 200, 500, 1000, 2000, 5000, 10000])
-    powers_n = []
+    parser = create_parser()
+    args = parser.parse_args()
 
-    # Fixed parameters for this experiment
-    HI_exp1 = 0.5      # 50% effective samples
-    MAF_exp1 = 0.3     # Minor allele frequency
-    beta_exp1 = 0.2    # Effect size
-    SNR_exp1 = 0.05    # Signal-to-Noise Ratio (lower means more noise)
-    num_sims_exp = 500 # Number of simulations per point for speed; increase for accuracy
-    alpha_exp = 0.05
+    if args.command == "plot":
+        try:
+            fixed_params = json.loads(args.fixed_params_json)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON string for fixed_params_json: {e}")
+            parser.print_help()
+            return
 
-    for n_val in sample_sizes:
-        print(f"  Simulating for N = {n_val}...")
-        p = estimate_power(num_sims_exp, n_val, HI_exp1, MAF_exp1, beta_exp1, SNR_exp1, alpha_exp)
-        powers_n.append(p)
-        print(f"    Estimated Power: {p:.4f}")
+        try:
+            varying_values = parse_varying_param_values(args.varying_param_values_spec)
+        except ValueError as e:
+            print(f"Error: Invalid format for varying_param_values_spec: {e}")
+            parser.print_help()
+            return
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(sample_sizes, powers_n, marker='o', linestyle='-')
-    plt.title(f'Power vs. Sample Size (N)\n(HI={HI_exp1}, MAF={MAF_exp1}, beta={beta_exp1}, SNR={SNR_exp1}, Sims={num_sims_exp})')
-    plt.xlabel('Total Sample Size (N)')
-    plt.ylabel('Statistical Power')
-    plt.grid(True)
-    plt.ylim(0, 1.05)
-    plt.savefig('power_vs_sample_size.png')
-    print("Saved plot to power_vs_sample_size.png")
-    # plt.show() # Uncomment to display plot directly
+        xlabel_to_use = args.xlabel if args.xlabel else args.varying_param_name
 
-    # --- Experiment 2: Power vs. Heterogeneity Index (HI) ---
-    print("\nRunning Experiment 2: Power vs. Heterogeneity Index (HI)")
-    heterogeneity_indices = np.linspace(0.05, 1.0, 10) # From 5% to 100% effective
-    powers_hi = []
+        # Ensure fixed_params has all necessary keys for plot_parameter_vs_power defaults,
+        # though plot_parameter_vs_power itself has defaults.
+        # It's good practice for fixed_params to be comprehensive excluding the varying one.
+        # Example: if varying 'N', fixed_params should ideally contain HI, MAF, beta, SNR, alpha.
+        # The plot_parameter_vs_power function handles merging these with its own internal defaults.
 
-    # Fixed parameters for this experiment
-    N_exp2 = 2000      # Total sample size
-    MAF_exp2 = 0.3
-    beta_exp2 = 0.2
-    SNR_exp2 = 0.05
+        plot_parameter_vs_power(
+            fixed_params=fixed_params,
+            varying_param_name=args.varying_param_name,
+            varying_param_values=varying_values,
+            num_sims_per_point=args.num_sims_per_point,
+            title=args.title,
+            xlabel=xlabel_to_use,
+            filename=args.filename,
+            x_log_scale=args.x_log_scale
+        )
+        print(f"\nPlot generated: {args.filename}")
 
-    for hi_val in heterogeneity_indices:
-        print(f"  Simulating for HI = {hi_val:.2f}...")
-        p = estimate_power(num_sims_exp, N_exp2, hi_val, MAF_exp2, beta_exp2, SNR_exp2, alpha_exp)
-        powers_hi.append(p)
-        print(f"    Estimated Power: {p:.4f}")
+    elif args.command == "estimate_hi":
+        estimated_hi = estimate_hi_for_target_power(
+            target_power=args.target_power,
+            N=args.N,
+            MAF=args.MAF,
+            beta=args.beta,
+            SNR=args.SNR,
+            alpha=args.alpha,
+            num_simulations_per_hi_evaluation=args.num_sims_eval,
+            hi_search_min=args.hi_min,
+            hi_search_max=args.hi_max,
+            tolerance=args.tolerance,
+            max_iterations=args.max_iter
+        )
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(heterogeneity_indices, powers_hi, marker='o', linestyle='-')
-    plt.title(f'Power vs. Heterogeneity Index (HI)\n(N={N_exp2}, MAF={MAF_exp2}, beta={beta_exp2}, SNR={SNR_exp2}, Sims={num_sims_exp})')
-    plt.xlabel('Heterogeneity Index (HI)')
-    plt.ylabel('Statistical Power')
-    plt.grid(True)
-    plt.ylim(0, 1.05)
-    plt.savefig('power_vs_heterogeneity_index.png')
-    print("Saved plot to power_vs_heterogeneity_index.png")
-    # plt.show()
-
-    # --- Experiment 3: Power vs. Signal-to-Noise Ratio (SNR) ---
-    print("\nRunning Experiment 3: Power vs. Signal-to-Noise Ratio (SNR)")
-    snr_values = np.array([0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5]) # SNR values
-    powers_snr = []
-
-    # Fixed parameters for this experiment
-    N_exp3 = 2000
-    HI_exp3 = 0.5
-    MAF_exp3 = 0.3
-    beta_exp3 = 0.2 # Keep beta constant to see SNR effect clearly
-
-    for snr_val in snr_values:
-        print(f"  Simulating for SNR = {snr_val:.3f}...")
-        p = estimate_power(num_sims_exp, N_exp3, HI_exp3, MAF_exp3, beta_exp3, snr_val, alpha_exp)
-        powers_snr.append(p)
-        print(f"    Estimated Power: {p:.4f}")
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(snr_values, powers_snr, marker='o', linestyle='-')
-    plt.title(f'Power vs. Signal-to-Noise Ratio (SNR)\n(N={N_exp3}, HI={HI_exp3}, MAF={MAF_exp3}, beta={beta_exp3}, Sims={num_sims_exp})')
-    plt.xlabel('Signal-to-Noise Ratio (SNR)')
-    plt.ylabel('Statistical Power')
-    plt.xscale('log') # SNR often viewed on log scale
-    plt.grid(True, which="both", ls="-")
-    plt.ylim(0, 1.05)
-    plt.savefig('power_vs_snr.png')
-    print("Saved plot to power_vs_snr.png")
-    # plt.show() # plt.close() is now handled by plot_parameter_vs_power
-
-    # --- Demonstrate plot_parameter_vs_power ---
-    print("\n--- Demonstrating generalized plotting function ---")
-
-    # Base parameters for demonstrations
-    base_params = {'N': 2000, 'HI': 0.5, 'MAF': 0.2, 'beta': 0.15, 'SNR': 0.05, 'alpha': 0.05}
-    num_sims_exp_main = 300 # Reduced for faster demo in main; increase for smoother curves
-
-    # Vary N
-    # Create a specific dict for fixed_params by removing the varying key from base_params
-    fixed_params_N = {k: v for k, v in base_params.items() if k != 'N'}
-    plot_parameter_vs_power(
-        fixed_params=fixed_params_N,
-        varying_param_name='N',
-        varying_param_values=np.array([100, 500, 1000, 2000, 4000, 8000]),
-        num_sims_per_point=num_sims_exp_main,
-        title=f'Power vs. Sample Size (N)\n(HI={base_params["HI"]}, MAF={base_params["MAF"]}, beta={base_params["beta"]}, SNR={base_params["SNR"]})',
-        xlabel='Total Sample Size (N)',
-        filename='main_power_vs_sample_size.png'
-    )
-
-    # Vary HI
-    fixed_params_HI = {k: v for k, v in base_params.items() if k != 'HI'}
-    plot_parameter_vs_power(
-        fixed_params=fixed_params_HI,
-        varying_param_name='HI',
-        varying_param_values=np.linspace(0.05, 1.0, 10),
-        num_sims_per_point=num_sims_exp_main,
-        title=f'Power vs. Heterogeneity Index (HI)\n(N={base_params["N"]}, MAF={base_params["MAF"]}, beta={base_params["beta"]}, SNR={base_params["SNR"]})',
-        xlabel='Heterogeneity Index (HI)',
-        filename='main_power_vs_hi.png'
-    )
-
-    # Vary MAF
-    fixed_params_MAF = {k: v for k, v in base_params.items() if k != 'MAF'}
-    plot_parameter_vs_power(
-        fixed_params=fixed_params_MAF,
-        varying_param_name='MAF',
-        varying_param_values=np.linspace(0.01, 0.5, 10),
-        num_sims_per_point=num_sims_exp_main,
-        title=f'Power vs. Minor Allele Frequency (MAF)\n(N={base_params["N"]}, HI={base_params["HI"]}, beta={base_params["beta"]}, SNR={base_params["SNR"]})',
-        xlabel='Minor Allele Frequency (MAF)',
-        filename='main_power_vs_maf.png'
-    )
-
-    # Vary beta (Effect Size)
-    fixed_params_beta = {k: v for k, v in base_params.items() if k != 'beta'}
-    plot_parameter_vs_power(
-        fixed_params=fixed_params_beta,
-        varying_param_name='beta',
-        varying_param_values=np.linspace(0.05, 0.35, 10), # Adjusted beta range for more variability
-        num_sims_per_point=num_sims_exp_main,
-        title=f'Power vs. Effect Size (beta)\n(N={base_params["N"]}, HI={base_params["HI"]}, MAF={base_params["MAF"]}, SNR={base_params["SNR"]})',
-        xlabel='Effect Size (beta)',
-        filename='main_power_vs_beta.png'
-    )
-
-    # Vary SNR
-    fixed_params_SNR = {k: v for k, v in base_params.items() if k != 'SNR'}
-    plot_parameter_vs_power(
-        fixed_params=fixed_params_SNR,
-        varying_param_name='SNR',
-        varying_param_values=np.array([0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5]),
-        num_sims_per_point=num_sims_exp_main,
-        title=f'Power vs. Signal-to-Noise Ratio (SNR)\n(N={base_params["N"]}, HI={base_params["HI"]}, MAF={base_params["MAF"]}, beta={base_params["beta"]})',
-        xlabel='Signal-to-Noise Ratio (SNR)',
-        filename='main_power_vs_snr.png',
-        x_log_scale=True
-    )
-
-    # --- Demonstrate estimate_hi_for_target_power ---
-    print("\n--- Demonstrating HI estimation for target power ---")
-    target_p_demo = 0.80
-    N_for_hi_est_demo = 3000
-    MAF_for_hi_est_demo = 0.10
-    beta_for_hi_est_demo = 0.20 # Adjusted effect size for demonstration
-    SNR_for_hi_est_demo = 0.08  # Adjusted SNR for demonstration
-
-    estimated_hi_demo = estimate_hi_for_target_power(
-        target_power=target_p_demo,
-        N=N_for_hi_est_demo,
-        MAF=MAF_for_hi_est_demo,
-        beta=beta_for_hi_est_demo,
-        SNR=SNR_for_hi_est_demo,
-        alpha=0.05,
-        num_simulations_per_hi_evaluation=num_sims_exp_main, # Use same num_sims for consistency
-        tolerance=0.03,
-        max_iterations=15
-    )
-
-    if estimated_hi_demo is not None:
-        print(f"\nTo achieve ~{target_p_demo*100}% power with N={N_for_hi_est_demo}, MAF={MAF_for_hi_est_demo}, beta={beta_for_hi_est_demo}, SNR={SNR_for_hi_est_demo},")
-        print(f"the estimated Heterogeneity Index (HI) required is: {estimated_hi_demo:.4f}")
-        # Verification step
-        print("Verifying power with the estimated HI...")
-        power_at_estimated_hi_demo = estimate_power(num_sims_exp_main + 200, N_for_hi_est_demo, estimated_hi_demo, MAF_for_hi_est_demo, beta_for_hi_est_demo, SNR_for_hi_est_demo, 0.05)
-        print(f"Power achieved with estimated HI ({estimated_hi_demo:.4f}): {power_at_estimated_hi_demo:.4f if power_at_estimated_hi_demo is not np.nan else 'NaN'}")
+        if estimated_hi is not None:
+            print(f"\nEstimated HI to achieve ~{args.target_power*100:.1f}% power: {estimated_hi:.4f}")
+            print("Parameters used for estimation:")
+            print(f"  N          : {args.N}")
+            print(f"  MAF        : {args.MAF}")
+            print(f"  Beta       : {args.beta}")
+            print(f"  SNR        : {args.SNR}")
+            print(f"  Alpha      : {args.alpha}")
+            print(f"  Sims/eval  : {args.num_sims_eval}")
+            print(f"  Tolerance  : {args.tolerance}")
+        else:
+            print(f"\nCould not estimate HI for {args.target_power*100:.1f}% power with the given parameters and search settings.")
     else:
-        print(f"\nCould not estimate HI to achieve {target_p_demo*100}% power for the given parameters.")
-        print(f"(N={N_for_hi_est_demo}, MAF={MAF_for_hi_est_demo}, beta={beta_for_hi_est_demo}, SNR={SNR_for_hi_est_demo})")
-
-    print("\nAll demonstrations complete.")
-
+        parser.print_help()
 
 # --- Reusable plotting function (to be implemented in next step) ---
 def plot_parameter_vs_power(fixed_params: dict,
