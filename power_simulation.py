@@ -45,6 +45,7 @@ import numpy as np
 from scipy import stats
 import argparse
 import json
+import sys
 
 # Helper function to parse varying_param_values_spec
 def parse_varying_param_values(spec_str: str) -> np.ndarray:
@@ -310,23 +311,16 @@ def estimate_power(num_simulations: int, N: int, HI: float, MAF: float, beta: fl
     power = significant_results / valid_simulations
     return power
 
-# Step 6: Develop a script to run experiments and visualize results will go here (likely in a separate main block or script)
-
 if __name__ == '__main__':
-    # Example usage (will be expanded later)
-    print("Simulation script initialized.")
-    # N_test = 1000
-    # HI_test = 0.1
-    # MAF_test = 0.2
-    # beta_test = 0.5
-    # SNR_test = 0.1 # Low SNR
-    # alpha_test = 0.05
-    # num_sims_test = 100
+    # This script is now primarily CLI driven.
+    # The old example code that was here has been removed.
+    # To run, use commands like:
+    # python power_simulation.py plot --fixed_params_json "{\"HI\":0.5,...}" ...
+    # python power_simulation.py estimate_hi --target_power 0.8 ...
 
-    # power = estimate_power(num_sims_test, N_test, HI_test, MAF_test, beta_test, SNR_test, alpha_test)
-    # print(f"Estimated power for single test run: {power:.4f}")
-
-    import matplotlib.pyplot as plt
+    # Ensure matplotlib.pyplot is imported if any function that might plot is called directly or via CLI
+    # However, it's better to import it inside functions that use it if they are few.
+    # For now, plot_parameter_vs_power imports it.
 
     parser = create_parser()
     args = parser.parse_args()
@@ -337,14 +331,14 @@ if __name__ == '__main__':
         except json.JSONDecodeError as e:
             print(f"Error: Invalid JSON string for fixed_params_json: {e}")
             parser.print_help()
-            return
+            sys.exit(1)
 
         try:
             varying_values = parse_varying_param_values(args.varying_param_values_spec)
         except ValueError as e:
             print(f"Error: Invalid format for varying_param_values_spec: {e}")
             parser.print_help()
-            return
+            sys.exit(1)
 
         xlabel_to_use = args.xlabel if args.xlabel else args.varying_param_name
 
@@ -399,8 +393,8 @@ if __name__ == '__main__':
             print(f"\nCould not estimate HI for {args.target_power*100:.1f}% power with the given parameters and search settings.")
     else:
         parser.print_help()
+        sys.exit(1) # Exit if no valid command was parsed (should be caught by argparse's required subparser)
 
-# --- Reusable plotting function (to be implemented in next step) ---
 def plot_parameter_vs_power(fixed_params: dict,
                             varying_param_name: str,
                             varying_param_values: list,
