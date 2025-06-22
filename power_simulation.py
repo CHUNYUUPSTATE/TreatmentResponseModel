@@ -16,17 +16,25 @@ The script uses `argparse` to provide a CLI for its main functionalities:
   - `estimate_hi`: Estimates the HI needed for a specified target power.
 
 Handling Case/Control Sample Sizes (N):
-For case/control studies, 'N' should generally be the total sample size (N_cases + N_controls).
-The effect size 'beta' and SNR should be considered in terms of their impact on the
-quantitative liability scale if applying results to a case/control design. The current
-simulation directly models a quantitative trait.
+The core simulation (`simulate_phenotype_and_test`) uses a single total sample size `N`
+and models a quantitative trait.
+- For the `plot` command:
+    - If 'N' is in `--fixed_params_json`, it should be the total sample size.
+    - If `--varying_param_name` is 'N', the values represent total sample size.
+- For the `estimate_hi` command:
+    - Provide `--N_cases` and `--N_controls` separately. The script will use their sum as total N
+      for the simulation.
+In all cases, the effect size 'beta' and SNR should be considered in terms of their
+impact on an underlying quantitative liability scale if you are applying results to a
+case/control design.
 
-Typical workflow for HI estimation based on observed signals:
-If you observed 'k' signals at a p-value 'alpha_obs' (e.g., 5e-8) with a sample size 'N_total',
+Typical workflow for HI estimation based on observed signals (e.g., from a GWAS):
+If you observed 'k' signals at a p-value 'alpha_obs' (e.g., 5e-8) with N_cases and N_controls,
 and you assume these signals were detected with approximately 'target_P' power (e.g., 80%),
-you can use the 'estimate_hi' command:
+you can use the 'estimate_hi' command with:
   --target_power [target_P]
-  --N [N_total]
+  --N_cases [num_cases]
+  --N_controls [num_controls]
   --alpha [alpha_obs]
   --MAF [typical_MAF_for_signals]
   --beta [typical_beta_for_signals]
@@ -103,7 +111,8 @@ Examples:
 2. Estimate HI for 80% power (e.g., for observed GWAS signals):
    python power_simulation.py estimate_hi \\
      --target_power 0.8 \\
-     --N 30000 \\
+     --N_cases 10000 \\
+     --N_controls 20000 \\
      --MAF 0.05 \\
      --beta 0.075 \\
      --SNR 0.02 \\
@@ -139,11 +148,11 @@ Examples:
     # --- Estimate HI Subcommand ---
     est_hi_parser = subparsers.add_parser("estimate_hi",
                                           help="Estimate Heterogeneity Index (HI) for a target power. "
-                                               "Useful for scenarios like: given N, alpha, and typical MAF/beta/SNR "
-                                               "for observed signals, what HI yields a target power (e.g., 0.8)?")
+                                               "Useful for scenarios like: given N_cases/N_controls, alpha, and "
+                                               "typical MAF/beta/SNR for observed signals, what HI yields a target power (e.g., 0.8)?")
     est_hi_parser.add_argument("--target_power", type=float, required=True, help="Target statistical power (e.g., 0.8).")
-    est_hi_parser.add_argument("--N", type=int, required=True,
-                               help="Total sample size. For case/control, use N = Ncases + Ncontrols.")
+    est_hi_parser.add_argument("--N_cases", type=int, required=True, help="Number of cases.")
+    est_hi_parser.add_argument("--N_controls", type=int, required=True, help="Number of controls.")
     est_hi_parser.add_argument("--MAF", type=float, required=True, help="Typical Minor Allele Frequency for the signals.")
     est_hi_parser.add_argument("--beta", type=float, required=True,
                                help="Typical effect size (on quantitative scale) for the signals. "
@@ -358,9 +367,11 @@ if __name__ == '__main__':
         print(f"\nPlot generated: {args.filename}")
 
     elif args.command == "estimate_hi":
+        N_total = args.N_cases + args.N_controls
+        print(f"Calculating total N = {args.N_cases} (cases) + {args.N_controls} (controls) = {N_total}")
         estimated_hi = estimate_hi_for_target_power(
             target_power=args.target_power,
-            N=args.N,
+            N=N_total, # Pass the calculated total N
             MAF=args.MAF,
             beta=args.beta,
             SNR=args.SNR,
@@ -375,7 +386,9 @@ if __name__ == '__main__':
         if estimated_hi is not None:
             print(f"\nEstimated HI to achieve ~{args.target_power*100:.1f}% power: {estimated_hi:.4f}")
             print("Parameters used for estimation:")
-            print(f"  N          : {args.N}")
+            print(f"  N_cases    : {args.N_cases}")
+            print(f"  N_controls : {args.N_controls}")
+            print(f"  N_total    : {N_total}")
             print(f"  MAF        : {args.MAF}")
             print(f"  Beta       : {args.beta}")
             print(f"  SNR        : {args.SNR}")
